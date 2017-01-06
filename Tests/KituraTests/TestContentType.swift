@@ -23,35 +23,34 @@ class TestContentType: XCTestCase {
 
     static var allTests: [(String, (TestContentType) -> () throws -> Void)] {
         return [
-            ("test_initialize", test_initialize),
-            ("test_filename", test_filename),
+            ("testInitialize", testInitialize),
+            ("testFilename", testFilename),
+            ("testIsContentType", testIsContentType)
         ]
     }
 
-    func test_initialize() {
+    let contentType = ContentType.sharedInstance
 
-        let pngType = ContentType.sharedInstance.getContentType(forExtension: "png")
+    func testInitialize() {
+
+        let pngType = contentType.getContentType(forExtension: "png")
 
         XCTAssertEqual(pngType, "image/png")
         XCTAssertNotEqual(pngType, "application/javascript")
 
-        let htmlType = ContentType.sharedInstance.getContentType(forExtension: "html")
+        let htmlType = contentType.getContentType(forExtension: "html")
 
         XCTAssertEqual(htmlType, "text/html")
         XCTAssertNotEqual(pngType, "application/javascript")
 
-        let jsType = ContentType.sharedInstance.getContentType(forExtension: "js")
+        let jsType = contentType.getContentType(forExtension: "js")
 
         XCTAssertEqual(jsType, "application/javascript")
 
-
-        //XCTAssertEqual(contentType, contentType)
     }
 
-    func test_filename() {
+    func testFilename() {
 
-        let contentType = ContentType.sharedInstance
-    
         var result = contentType.getContentType(forFileName: "foo.png")
         XCTAssertEqual(result, "image/png")
 
@@ -69,6 +68,27 @@ class TestContentType: XCTestCase {
 
         result = contentType.getContentType(forFileName: "test.with.periods.html")
         XCTAssertEqual(result, "text/html")
+
+        result = contentType.getContentType(forFileName: "test/html")
+        XCTAssertEqual(result, "text/html")
+    }
+
+    func testIsContentType() {
+        var result = contentType.isContentType("application/json", ofType: "json")
+        XCTAssertTrue(result)
+
+        result = contentType.isContentType("json", ofType: "json")
+        XCTAssertTrue(result)
+
+        result = contentType.isContentType("text/html", ofType: "json")
+        XCTAssertFalse(result)
+
+        result = contentType.isContentType("application/x-www-form-urlencoded", ofType: "urlencoded")
+        XCTAssertTrue(result)
+
+        result = contentType.isContentType("multipart/form-data", ofType: "multipart")
+        XCTAssertTrue(result)
+
     }
 
 }

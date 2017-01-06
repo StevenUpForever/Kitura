@@ -50,21 +50,37 @@ public class Router {
     /// Helper for serving file resources
     fileprivate let fileResourceServer = FileResourceServer()
 
+    /// Flag to enable/disable access to parent router's params
+    private let mergeParameters: Bool
+
+    /// Collection of `RouterParameterHandler` for specified parameter name
+    /// that will be passed to `RouterElementWalker` when server receives client request
+    /// and used to handle request's url parameters.
+    fileprivate var parameterHandlers = [String : [RouterParameterHandler]]()
+
     /// Initialize a `Router` instance
-    public init() {
+    /// - parameter mergeParameters: Specify if this router should have access to path parameters
+    /// matched in its parent router. Defaults to `false`.
+    public init(mergeParameters: Bool = false) {
+        self.mergeParameters = mergeParameters
+
         Log.verbose("Router initialized")
     }
 
     func routingHelper(_ method: RouterMethod, pattern: String?, handler: [RouterHandler]) -> Router {
-        elements.append(RouterElement(method: method, pattern: pattern, handler: handler))
+        elements.append(RouterElement(method: method,
+                                      pattern: pattern,
+                                      handler: handler,
+                                      mergeParameters: mergeParameters))
         return self
     }
 
     func routingHelper(_ method: RouterMethod, pattern: String?, allowPartialMatch: Bool = true, middleware: [RouterMiddleware]) -> Router {
         elements.append(RouterElement(method: method,
-            pattern: pattern,
-            middleware: middleware,
-            allowPartialMatch: allowPartialMatch))
+                                      pattern: pattern,
+                                      middleware: middleware,
+                                      allowPartialMatch: allowPartialMatch,
+                                      mergeParameters: mergeParameters))
         return self
     }
 
@@ -110,7 +126,9 @@ public class Router {
 
         if resourceExtension.isEmpty {
             fileExtension = defaultEngineFileExtension ?? ""
-            //TODO use stringByAppendingPathExtension once issue https://bugs.swift.org/browse/SR-999 is resolved
+            // swiftlint:disable todo
+            //TODO: Use stringByAppendingPathExtension once issue https://bugs.swift.org/browse/SR-999 is resolved
+            // swiftlint:enable todo
             resourceWithExtension = template + "." + fileExtension
         } else {
             fileExtension = resourceExtension
@@ -125,7 +143,14 @@ public class Router {
             throw TemplatingError.noTemplateEngineForExtension(extension: fileExtension)
         }
 
-        let filePath = viewsPath + resourceWithExtension
+        let filePath: String
+        if let decodedResourceExtension = resourceWithExtension.removingPercentEncoding {
+            filePath = viewsPath + decodedResourceExtension
+        } else {
+            Log.warning("Unable to decode url \(resourceWithExtension)")
+            filePath = viewsPath + resourceWithExtension
+        }
+
         let absoluteFilePath = StaticFileServer.ResourcePathHandler.getAbsolutePath(for: filePath)
         return try templateEngine.render(filePath: absoluteFilePath, context: context)
     }
@@ -138,12 +163,61 @@ public class Router {
     /// path and handles all of the mappings of paths below that.
     ///
     /// - Parameter route: The path to bind the sub router to.
-    ///
+    /// - parameter mergeParameters: Specify if this router should have access to path parameters
+    /// matched in its parent router. Defaults to `false`.
+    /// - Parameter allowPartialMatch: A Bool that indicates whether or not a partial match of
+    /// the path by the pattern is sufficient.
     /// - Returns: The created sub router.
-    public func route(_ route: String) -> Router {
-        let subrouter = Router()
-        self.all(route, middleware: subrouter)
+    public func route(_ route: String, mergeParameters: Bool = false, allowPartialMatch: Bool = true) -> Router {
+        let subrouter = Router(mergeParameters: mergeParameters)
+        subrouter.parameterHandlers = self.parameterHandlers
+        self.all(route, allowPartialMatch: allowPartialMatch, middleware: subrouter)
         return subrouter
+    }
+
+    // MARK: Parameter handling
+
+    /// Setup a  handler for specific name of request parameters.
+    /// This can make it easier to handle values of provided parameter name.
+    ///
+    /// - Parameter name: A single parameter name to be handled
+    /// - Parameter handler: A comma delimited set of `RouterParameterHandler`s that will be
+    ///                     invoked when request parses a parameter with specified name.
+    /// - Returns: Current router instance
+    @discardableResult
+    public func parameter(_ name: String, handler: @escaping RouterParameterHandler...) -> Router {
+        return self.parameter([name], handlers: handler)
+    }
+
+    /// Setup a  handler for specific name of request parameters.
+    /// This can make it easier to handle values of provided parameter name.
+    ///
+    /// - Parameter names: The array of parameter names that will be used to invoke handlers
+    /// - Parameter handler: A comma delimited set of `RouterParameterHandler`s that will be
+    ///                     invoked when request parses a parameter with specified name.
+    /// - Returns: Current router instance
+    @discardableResult
+    public func parameter(_ names: [String], handler: @escaping RouterParameterHandler...) -> Router {
+        return self.parameter(names, handlers: handler)
+    }
+
+    /// Setup a  handler for specific name of request parameters.
+    /// This can make it easier to handle values of provided parameter name.
+    ///
+    /// - Parameter names: The array of parameter names that will be used to invoke handlers
+    /// - Parameter handlers: The array of `RouterParameterHandler`s that will be
+    ///                     invoked when request parses a parameter with specified name.
+    /// - Returns: Current router instance
+    @discardableResult
+    public func parameter(_ names: [String], handlers: [RouterParameterHandler]) -> Router {
+        for name in names {
+            if self.parameterHandlers[name] == nil {
+                self.parameterHandlers[name] = handlers
+            } else {
+                self.parameterHandlers[name]?.append(contentsOf: handlers)
+            }
+        }
+        return self
     }
 }
 
@@ -159,24 +233,29 @@ extension Router : RouterMiddleware {
     /// - Parameter next: The closure to invoke to cause the router to inspect the
     ///                  path in the list of paths.
     public func handle(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) throws {
-        guard let urlPath = request.parsedURL.path else {
-            Log.error("Failed to handle request")
+        guard let urlPath = request.parsedURLPath.path else {
+            Log.error("request.parsedURLPath.path is nil. Failed to handle request")
             return
         }
 
-        let mountpath = request.matchedPath
-        guard let prefixRange = urlPath.range(of: mountpath) else {
-            Log.error("Failed to find matches in url")
-            return
-        }
-        request.parsedURL.path?.removeSubrange(prefixRange)
+        if request.allowPartialMatch {
+            let mountpath = request.matchedPath
 
-        if request.parsedURL.path == "" {
-            request.parsedURL.path = "/"
+            /// Note: Since regex always start with ^, the beginning of line character,
+            /// matched ranges always start at location 0, so it's OK to check via `hasPrefix`.
+            /// Note: `hasPrefix("")` is `true` on macOS but `false` on Linux
+            guard mountpath == "" || urlPath.hasPrefix(mountpath) else {
+                Log.error("Failed to find matches in url")
+                return
+            }
+
+            let index = urlPath.index(urlPath.startIndex, offsetBy: mountpath.characters.count)
+
+            request.parsedURLPath.path = urlPath.substring(from: index)
         }
 
         process(request: request, response: response) {
-            request.parsedURL.path = urlPath
+            request.parsedURLPath.path = urlPath
             next()
         }
     }
@@ -195,11 +274,23 @@ extension Router : ServerDelegate {
         let routeReq = RouterRequest(request: request)
         let routeResp = RouterResponse(response: response, router: self, request: routeReq)
 
-        process(request: routeReq, response: routeResp) { [unowned self] () in
+        process(request: routeReq, response: routeResp) { [weak self, weak routeReq, weak routeResp] () in
+            guard let strongSelf = self else {
+                Log.error("Found nil self at \(#file) \(#line)")
+                return
+            }
+            guard let routeReq = routeReq else {
+                Log.error("Found nil routeReq at \(#file) \(#line)")
+                return
+            }
+            guard let routeResp = routeResp else {
+                Log.error("Found nil routeResp at \(#file) \(#line)")
+                return
+            }
             do {
                 if  !routeResp.state.invokedEnd {
                     if  routeResp.statusCode == .unknown  && !routeResp.state.invokedSend {
-                        self.sendDefaultResponse(request: routeReq, response: routeResp)
+                        strongSelf.sendDefaultResponse(request: routeReq, response: routeResp)
                     }
                     try routeResp.end()
                 }
@@ -219,17 +310,21 @@ extension Router : ServerDelegate {
     /// - Parameter callback: The closure to invoke to cause the router to inspect the
     ///                  path in the list of paths.
     fileprivate func process(request: RouterRequest, response: RouterResponse, callback: @escaping () -> Void) {
-        guard let urlPath = request.parsedURL.path else {
-            Log.error("Failed to process request")
+        guard let urlPath = request.parsedURLPath.path else {
+            Log.error("request.parsedURLPath.path is nil. Failed to process request")
             return
         }
 
-        let lengthIndex = kituraResourcePrefix.endIndex
-        if  urlPath.characters.count > kituraResourcePrefix.characters.count && urlPath.substring(to: lengthIndex) == kituraResourcePrefix {
-            let resource = urlPath.substring(from: lengthIndex)
+        if  urlPath.hasPrefix(kituraResourcePrefix) {
+            let resource = urlPath.substring(from: kituraResourcePrefix.endIndex)
             fileResourceServer.sendIfFound(resource: resource, usingResponse: response)
         } else {
-            let looper = RouterElementWalker(elements: self.elements, request: request, response: response, callback: callback)
+            let looper = RouterElementWalker(elements: self.elements,
+                                             parameterHandlers: self.parameterHandlers,
+                                             request: request,
+                                             response: response,
+                                             callback: callback)
+
             looper.next()
         }
     }
@@ -242,11 +337,11 @@ extension Router : ServerDelegate {
     /// - Parameter response: The `RouterResponse` object used to send responses
     ///                      to the HTTP request.
     private func sendDefaultResponse(request: RouterRequest, response: RouterResponse) {
-        if request.parsedURL.path == "/" {
+        if request.parsedURLPath.path == "/" {
             fileResourceServer.sendIfFound(resource: "index.html", usingResponse: response)
         } else {
             do {
-                let errorMessage = "Cannot \(request.method) \(request.parsedURL.path ?? "")."
+                let errorMessage = "Cannot \(request.method) \(request.parsedURLPath.path ?? "")."
                 try response.status(.notFound).send(errorMessage).end()
             } catch {
                 Log.error("Error sending default not found message: \(error)")

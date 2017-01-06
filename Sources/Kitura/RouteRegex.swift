@@ -54,34 +54,25 @@ public class RouteRegex {
     /// - Parameter allowPartialMatch: True if a partial match is allowed. Defaults to false.
     /// - Returns: A tuple of the compiled `RegularExpressionType?` and array of keys
     internal func buildRegex(fromPattern: String?, allowPartialMatch: Bool = false) -> (RegularExpressionType?, [String]?) {
-        guard let fromPattern = fromPattern else {
+        guard let pattern = fromPattern else {
             return (nil, nil)
         }
 
-        var pattern = fromPattern
         var regexStr = "^"
         var keys = [String]()
         var nonKeyIndex = 0
 
-        if allowPartialMatch && pattern.hasSuffix("*") {
-            pattern = String(pattern.characters.dropLast())
-        }
-
         let paths = pattern.components(separatedBy: "/")
-
-        // Special case where only back slashes are specified
-        if paths.filter({$0 != ""}).isEmpty {
-            regexStr.append("/")
-        }
 
         for path in paths {
             (regexStr, keys, nonKeyIndex) =
                 handlePath(path, regexStr: regexStr, keys: keys, nonKeyIndex: nonKeyIndex)
         }
 
-        regexStr.append("(?:/(?=$))?")
-        if !allowPartialMatch {
-            regexStr.append("$")
+        if allowPartialMatch {
+            regexStr.append("(?:/(?=$))?(?=/|$)")
+        } else {
+            regexStr.append("(?:/(?=$))?$")
         }
 
         var regex: RegularExpressionType? = nil
@@ -132,7 +123,7 @@ public class RouteRegex {
             return (true, prefix, ".*", plusQuestStar)
         }
 
-        let range = NSMakeRange(0, path.characters.count)
+            let range = NSRange(location: 0, length: path.characters.count)
             let nsPath = NSString(string: path)           // Needed for substring
 
         if let keyMatch = keyRegex.firstMatch(in: path, options: [], range: range) {
@@ -146,7 +137,7 @@ public class RouteRegex {
             #else
                 let keyMatchRange = keyMatch.rangeAt(2)
             #endif
-            
+
             keys.append(nsPath.substring(with: keyMatchRange))
             matched = true
         } else if let nonKeyMatch = nonKeyRegex.firstMatch(in: path, options: [], range: range) {
@@ -185,7 +176,7 @@ public class RouteRegex {
                                   matchExp: String) -> String {
         // We have some kind of capture for this path element
         // Build the runtime regex depending on whether or not there is "repetition"
-        switch(plusQuestStar) {
+        switch plusQuestStar {
         case "+":
             return "/\(prefix)(\(matchExp)(?:/\(matchExp))*)"
         case "?":

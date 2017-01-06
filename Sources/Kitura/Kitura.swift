@@ -20,7 +20,6 @@ import LoggerAPI
 import Foundation
 import Dispatch
 
-
 // MARK Kitura
 
 /// A set of helper functions to make it easier to create, start, and stop Kitura based servers.
@@ -69,14 +68,7 @@ public class Kitura {
     /// - note: This function never returns - it should be the last call in your main.swift
     public class func run() {
         Log.verbose("Starting Kitura framework...")
-        for (server, port) in httpServersAndPorts {
-            Log.verbose("Starting an HTTP Server on port \(port)...")
-            server.listen(port: port)
-        }
-        for (server, port) in fastCGIServersAndPorts {
-            Log.verbose("Starting a FastCGI Server on port \(port)...")
-            server.listen(port: port)
-        }
+        start()
         ListenerGroup.waitForListeners()
     }
 
@@ -86,11 +78,19 @@ public class Kitura {
     public class func start() {
         for (server, port) in httpServersAndPorts {
             Log.verbose("Starting an HTTP Server on port \(port)...")
-            server.listen(port: port)
+            do {
+                try server.listen(on: port)
+            } catch {
+                Log.error("Error listening on port \(port): \(error). Use server.failed(callback:) to handle")
+            }
         }
         for (server, port) in fastCGIServersAndPorts {
             Log.verbose("Starting a FastCGI Server on port \(port)...")
-            server.listen(port: port)
+            do {
+                try server.listen(on: port)
+            } catch {
+                Log.error("Error listening on port \(port): \(error). Use server.failed(callback:) to handle")
+            }
         }
     }
 

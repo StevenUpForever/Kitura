@@ -33,16 +33,24 @@ class TestResponse: XCTestCase {
         return [
             ("testSimpleResponse", testSimpleResponse),
             ("testPostRequest", testPostRequest),
+            ("testPostRequestTheHardWay", testPostRequestTheHardWay),
             ("testPostJSONRequest", testPostRequest),
             ("testPostRequestWithDoubleBodyParser", testPostRequestWithDoubleBodyParser),
             ("testPostRequestUrlEncoded", testPostRequestUrlEncoded),
             ("testMultipartFormParsing", testMultipartFormParsing),
-            ("testParameter", testParameter),
+            ("testRawDataPost", testRawDataPost),
+            ("testParameters", testParameters),
+            ("testParametersPercent20InPath", testParametersPercent20InPath),
+            ("testParametersPlusInPath", testParametersPlusInPath),
+            ("testParametersPercent20InQuery", testParametersPercent20InQuery),
+            ("testParametersPlusInQuery", testParametersPlusInQuery),
+            ("testParametersPercentageEncoding", testParametersPercentageEncoding),
             ("testRedirect", testRedirect),
             ("testErrorHandler", testErrorHandler),
             ("testHeaderModifiers", testHeaderModifiers),
             ("testRouteFunc", testRouteFunc),
             ("testAcceptTypes", testAcceptTypes),
+            ("testAcceptEncodingTypes", testAcceptEncodingTypes),
             ("testFormat", testFormat),
             ("testLink", testLink),
             ("testSubdomains", testSubdomains),
@@ -89,6 +97,24 @@ class TestResponse: XCTestCase {
                 do {
                     let body = try response!.readString()
                     XCTAssertEqual(body!, "<!DOCTYPE html><html><body><b>Received text body: </b>plover\nxyzzy\n</body></html>\n\n")
+                } catch {
+                    XCTFail("No response body")
+                }
+                expectation.fulfill()
+            }) {req in
+                req.write(from: "plover\n")
+                req.write(from: "xyzzy\n")
+            }
+        }
+    }
+
+    func testPostRequestTheHardWay() {
+        performServerTest(router) { expectation in
+            self.performRequest("post", path: "/bodytesthardway", callback: {response in
+                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+                do {
+                    let body = try response!.readString()
+                    XCTAssertEqual(body!, "Read 13 bytes")
                 } catch {
                     XCTFail("No response body")
                 }
@@ -227,7 +253,7 @@ class TestResponse: XCTestCase {
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
                 do {
                     let body = try response!.readString()
-                    XCTAssertEqual(body!, "text text(\"text default\") file1 text(\"Content of a.txt.\") file2 text(\"<!DOCTYPE html><title>Content of a.html.</title>\") ")
+                    XCTAssertEqual(body!, "text  text(\"text default\") file1 a.txt text(\"Content of a.txt.\") file2 a.html text(\"<!DOCTYPE html><title>Content of a.html.</title>\") ")
                 } catch {
                     XCTFail("No response body")
                 }
@@ -254,7 +280,7 @@ class TestResponse: XCTestCase {
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
                 do {
                     let body = try response!.readString()
-                    XCTAssertEqual(body!, " text(\"text default\") file1 text(\"Content of a.txt.\") file2 text(\"<!DOCTYPE html><title>Content of a.html.</title>\") ")
+                    XCTAssertEqual(body!, "  text(\"text default\") file1 a.txt text(\"Content of a.txt.\") file2 a.html text(\"<!DOCTYPE html><title>Content of a.html.</title>\") ")
                 } catch {
                     XCTFail("No response body")
                 }
@@ -284,7 +310,7 @@ class TestResponse: XCTestCase {
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
                 do {
                     let body = try response!.readString()
-                    XCTAssertEqual(body!, " text(\"text default\") ")
+                    XCTAssertEqual(body!, "  text(\"text default\") ")
                 } catch {
                     XCTFail("No response body")
                 }
@@ -318,19 +344,94 @@ class TestResponse: XCTestCase {
 
     }
 
-    func testParameter() {
-    	performServerTest(router) { expectation in
-            self.performRequest("get", path: "/zxcv/test?q=test2", callback: {response in
-                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+    func testRawDataPost() {
+        performServerTest(router) { expectation in
+            self.performRequest("post",
+                                path: "/bodytest",
+                                callback: {
+                                    (response) in
+                                    guard let response = response else {
+                                        XCTFail("Client response was nil on raw data post.")
+                                        expectation.fulfill()
+                                        return
+                                    }
+
+                                    XCTAssertNotNil(response.headers["Date"], "There was No Date header in the response")
+                                    do {
+                                        let responseString = try response.readString()
+                                        XCTAssertEqual("length: 2048", responseString)
+                                    } catch {
+                                        XCTFail("Failed posting raw data")
+                                    }
+                                    expectation.fulfill()
+            },
+                                headers: ["Content-Type": "application/octet-stream"],
+                                requestModifier: {
+                                    (request) in
+                                    let length = 2048
+                                    let bytes = [UInt32](repeating: 0, count: length).map { _ in 0 }
+                                    let randomData = Data(bytes: bytes, count: length)
+                                    request.write(from: randomData)
+            })
+        }
+    }
+
+    private func runTestParameters(pathParameter: String, queryParameter: String,
+                                   expectedReturnedPathParameter: String? = nil,
+                                   expectedReturnedQueryParameter: String? = nil) {
+        let expectedReturnedPathParameter = expectedReturnedPathParameter ?? pathParameter
+        let expectedReturnedQueryParameter = expectedReturnedQueryParameter ?? queryParameter
+        performServerTest(router) { expectation in
+            self.performRequest("get", path: "/zxcv/\(pathParameter)?q=\(queryParameter)",
+                callback: { response in
+                guard let response = response else {
+                    XCTFail("ClientRequest response object was nil")
+                    expectation.fulfill()
+                    return
+                }
+
                 do {
-                    let body = try response!.readString()
-                    XCTAssertEqual(body!, "<!DOCTYPE html><html><body><b>Received /zxcv</b><p><p>p1=test<p><p>q=test2<p><p>u1=Ploni Almoni</body></html>\n\n")
+                    let body = try response.readString()
+                    XCTAssertEqual(body, "<!DOCTYPE html><html><body><b>Received /zxcv</b><p>" +
+                        "<p>p1=\(expectedReturnedPathParameter)<p>" +
+                        "<p>q=\(expectedReturnedQueryParameter)<p>" +
+                        "<p>u1=Ploni Almoni</body></html>\n\n")
                 } catch {
                     XCTFail("No response body")
                 }
                 expectation.fulfill()
             })
         }
+    }
+
+    func testParameters() {
+        runTestParameters(pathParameter: "test1", queryParameter: "test2")
+    }
+
+    func testParametersPercent20InPath() {
+        runTestParameters(pathParameter: "John%20Doe", queryParameter: "test2",
+                          expectedReturnedPathParameter: "John Doe")
+    }
+
+    func testParametersPlusInPath() {
+        runTestParameters(pathParameter: "John+Doe", queryParameter: "test2",
+                          expectedReturnedPathParameter: "John+Doe")
+    }
+
+    func testParametersPercent20InQuery() {
+        runTestParameters(pathParameter: "test1", queryParameter: "John%20Doe",
+                          expectedReturnedQueryParameter: "John Doe")
+    }
+
+    func testParametersPlusInQuery() {
+        runTestParameters(pathParameter: "test1", queryParameter: "John+Doe",
+                          expectedReturnedQueryParameter: "John Doe")
+    }
+
+    func testParametersPercentageEncoding() {
+        runTestParameters(pathParameter: "John%40Doe", queryParameter: "Jane%2BRoe",
+                          expectedReturnedPathParameter: "John@Doe",
+                          expectedReturnedQueryParameter: "Jane+Roe")
     }
 
     func testRedirect() {
@@ -441,7 +542,7 @@ class TestResponse: XCTestCase {
 
         router.get("/customPage") { request, response, next in
 
-            XCTAssertEqual(request.accepts(types: "html"), "html", "Accepts did not return expected value")
+            XCTAssertEqual(request.accepts(type: "html"), "html", "Accepts did not return expected value")
             XCTAssertEqual(request.accepts(types: "text/html"), "text/html", "Accepts did not return expected value")
             XCTAssertEqual(request.accepts(types: ["json", "text"]), "json", "Accepts did not return expected value")
             XCTAssertEqual(request.accepts(types: "application/json"), "application/json", "Accepts did not return expected value")
@@ -488,7 +589,57 @@ class TestResponse: XCTestCase {
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
                 expectation.fulfill()
             }) {req in
-                req.headers = ["Accept" : "application/*;q=0.2, image/jpeg;q=0.8, text/html, text/plain, */*;q=.7"]
+                req.headers = ["accept" : "*/*;q=.001, application/*;q=0.2, image/jpeg;q=0.8, text/html, text/plain"]
+            }
+        })
+    }
+
+    func testAcceptEncodingTypes() {
+        router.get("/customPage") { request, response, next in
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", type: "gzip"), "gzip", "Accepts did not return expected value")
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", types: "compress"), "compress", "Accepts did not return expected value")
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", types: ["compress", "gzip"]), "gzip", "Accepts did not return expected value")
+
+            // should NOT match "*" here as q = 0
+            XCTAssertNil(request.accepts(header: "Accept-Encoding", types: "deflate"), "Request accepts this type when it shouldn't")
+
+            do {
+                try response.status(HTTPStatusCode.OK).send("<!DOCTYPE html><html><body><b>Received</b></body></html>\n\n").end()
+            } catch {}
+            next()
+        }
+
+        router.get("/customPage2") { request, response, next in
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", type: "gzip"), "gzip", "Accepts did not return expected value")
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", types: "compress"), "compress", "Accepts did not return expected value")
+            //should match compress instead of gzip here as q value is greater
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", types: ["compress", "gzip"]), "compress", "Accepts did not return expected value")
+
+            // should match "*" here as q > 0
+            XCTAssertEqual(request.accepts(header: "Accept-Encoding", types: "deflate"), "deflate", "Accepts did not return expected value")
+
+            // should NOT match here as header is incorrect
+            XCTAssertNil(request.accepts(header: "Accept-Charset", types: "deflate"), "Request accepts this type when it shouldn't")
+
+            do {
+                try response.status(HTTPStatusCode.OK).send("<!DOCTYPE html><html><body><b>Received</b></body></html>\n\n").end()
+            } catch {}
+            next()
+        }
+
+        performServerTest(router, asyncTasks: { expectation in
+            self.performRequest("get", path: "/customPage", callback: {response in
+                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+                expectation.fulfill()
+            }) {req in
+                req.headers = ["Accept-Encoding" : "compress;q=0.5, gzip;q=1.0, *;q=0"]
+            }
+        }, { expectation in
+            self.performRequest("get", path:"/customPage2", callback: {response in
+                XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
+                expectation.fulfill()
+            }) {req in
+                req.headers = ["accept-encoding" : "gzip;q=0.5, compress;q=1.0, *;q=0.001"]
             }
         })
     }
@@ -708,7 +859,7 @@ class TestResponse: XCTestCase {
             })
         }
     }
-    
+
     func testSend() {
         performServerTest(router) { expectation in
             self.performRequest("get", path: "/data", callback: { response in
@@ -724,7 +875,7 @@ class TestResponse: XCTestCase {
                 expectation.fulfill()
             })
         }
-        
+
         performServerTest(router) { expectation in
             self.performRequest("get", path: "/json", callback: { response in
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
@@ -741,7 +892,7 @@ class TestResponse: XCTestCase {
                 expectation.fulfill()
             })
         }
-        
+
         performServerTest(router) { expectation in
             self.performRequest("get", path: "/download", callback: { response in
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
@@ -749,12 +900,11 @@ class TestResponse: XCTestCase {
                 XCTAssertEqual(response!.headers["Content-Type"]?.first, "text/html", "Wrong Content-Type header")
                 do {
                     let body = try response!.readString()
-                    XCTAssertEqual(body!,"<!DOCTYPE html><html><body><b>Index</b></body></html>\n")
-                }
-                catch{
+                    XCTAssertEqual(body!, "<!DOCTYPE html><html><body><b>Index</b></body></html>\n")
+                } catch {
                     XCTFail("No response body")
                 }
-            
+
                 expectation.fulfill()
             })
         }
@@ -836,31 +986,35 @@ class TestResponse: XCTestCase {
                 next ()
                 return
             }
-            switch (requestBody) {
-                case .urlEncoded(let value):
-                    do {
-                        response.headers["Content-Type"] = "text/html; charset=utf-8"
-                        try response.send("<!DOCTYPE html><html><body><b>Received URL encoded body</b><br> \(value) </body></html>\n\n").end()
-                    } catch {
-                        XCTFail("caught error: \(error)")
-                    }
-                case .text(let value):
-                    do {
-                        response.headers["Content-Type"] = "text/html; charset=utf-8"
-                        try response.send("<!DOCTYPE html><html><body><b>Received text body: </b>\(value)</body></html>\n\n").end()
-                    } catch {
-                        XCTFail("caught error: \(error)")
-                    }
-                case .json(let value):
-                    do {
-                        response.headers["Content-Type"] = "application/json; charset=utf-8"
-                        try response.send(data: value.rawData()).end()
-                    } catch {
-                        XCTFail("caught error: \(error)")
-                    }
-                default:
-                    response.error = Error.failedToParseRequestBody(body: "\(request.body)")
 
+            if let urlEncoded = requestBody.asURLEncoded {
+                do {
+                    response.headers["Content-Type"] = "text/html; charset=utf-8"
+                    try response.send("<!DOCTYPE html><html><body><b>Received URL encoded body</b><br> \(urlEncoded) </body></html>\n\n").end()
+                } catch {
+                    XCTFail("caught error: \(error)")
+                }
+            } else if let text = requestBody.asText {
+                do {
+                    response.headers["Content-Type"] = "text/html; charset=utf-8"
+                    try response.send("<!DOCTYPE html><html><body><b>Received text body: </b>\(text)</body></html>\n\n").end()
+                } catch {
+                    XCTFail("caught error: \(error)")
+                }
+            } else if let json = requestBody.asJSON {
+                do {
+                    response.headers["Content-Type"] = "application/json; charset=utf-8"
+                    try response.send(data: json.rawData()).end()
+                } catch {
+                    XCTFail("caught error: \(error)")
+                }
+            } else if case let .raw(data) = requestBody {
+                XCTAssertNotNil(data)
+                let length = "2048"
+                _ = response.send("length: \(length)")
+                next()
+            } else {
+                response.error = Error.failedToParseRequestBody(body: "\(request.body)")
             }
 
             next()
@@ -869,27 +1023,33 @@ class TestResponse: XCTestCase {
         router.all("/bodytest", middleware: BodyParser())
         router.post("/bodytest", handler: bodyTestHandler)
 
+        router.post("/bodytesthardway") { request, response, next in
+            let body = try request.readString()
+            response.status(.OK).send("Read \(body?.characters.count ?? 0) bytes")
+            next()
+        }
+
         //intentially BodyParser is added twice, to check how two body parsers work together
         router.all("/doublebodytest", middleware: BodyParser())
         router.all("/doublebodytest", middleware: BodyParser())
         router.post("/doublebodytest", handler: bodyTestHandler)
 
-
         router.all("/multibodytest", middleware: BodyParser())
 
         router.post("/multibodytest") { request, response, next in
-            guard let requestBody = request.body else {
+            guard let body = request.body else {
                 next ()
                 return
             }
-            switch (requestBody) {
-            case .multipart(let parts):
-                for part in parts {
-                    response.send("\(part.name) \(part.body) ")
-                }
-            default:
+            guard let parts = body.asMultiPart else {
                 response.error = Error.failedToParseRequestBody(body: "\(request.body)")
+                next ()
+                return
             }
+            for part in parts {
+                response.send("\(part.name) \(part.filename) \(part.body) ")
+            }
+
             next()
         }
 
@@ -979,7 +1139,6 @@ class TestResponse: XCTestCase {
             } catch {}
         }
 
-        
         router.get("/lifecycle") { request, response, next in
             var previousOnEndInvoked: LifecycleHandler? = nil
             let onEndInvoked = {
@@ -1001,8 +1160,7 @@ class TestResponse: XCTestCase {
             } catch {}
             next()
         }
-        
-        
+
         router.get("/data") { _, response, next in
             do {
                 try response.send(data: "<!DOCTYPE html><html><body><b>Received</b></body></html>\n\n".data(using: .utf8)!).end()
@@ -1018,7 +1176,7 @@ class TestResponse: XCTestCase {
             } catch {}
             next()
         }
- 
+
         router.get("/download") { _, response, next in
             do {
                 try response.send(download: "./Tests/KituraTests/TestStaticFileServer/index.html")
@@ -1026,7 +1184,6 @@ class TestResponse: XCTestCase {
             next()
         }
 
-        
         router.error { request, response, next in
             response.headers["Content-Type"] = "text/html; charset=utf-8"
             do {
@@ -1041,6 +1198,21 @@ class TestResponse: XCTestCase {
             next()
         }
 
+        router.error([ { request, response, next in
+            // Dummy error handler
+            next()
+        }])
+
+        router.error(DummyErrorMiddleware())
+
+        router.error([DummyErrorMiddleware()])
+
 	return router
+    }
+
+    class DummyErrorMiddleware: RouterMiddleware {
+        func handle(request: RouterRequest, response: RouterResponse, next: @escaping () -> Void) throws {
+            next()
+        }
     }
 }

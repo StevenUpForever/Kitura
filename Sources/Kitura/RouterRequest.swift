@@ -29,36 +29,22 @@ public class RouterRequest {
     let serverRequest: ServerRequest
 
     /// The hostname of the request.
-    public private(set) lazy var hostname: String = { [unowned self] () in
-        guard let host = self.headers["host"] else {
-            return self.parsedURL.host ?? ""
-        }
-        let range = host.range(of: ":")
-        return  range == nil ? host : host.substring(to: range!.lowerBound)
-    }()
+    public var hostname: String {
+        return urlURL.host ?? ""
+    }
 
     ///The port of the request.
-    public private(set) lazy var port: Int = { [unowned self] () in
-        guard let host = self.headers["host"] else {
-            return -1
-        }
-
-        let defaultPort: Int = 80
-        let range = host.range(of: ":")
-        return  range == nil ? defaultPort : Int(host.substring(from: range!.upperBound))!
-    }()
+    public var port: Int {
+        return urlURL.port ?? (urlURL.scheme == "https" ? 443 : 80)
+    }
 
     /// The domain name of the request.
     public private(set) lazy var domain: String = { [unowned self] in
         let pattern = "([a-z0-9][a-z0-9\\-]{1,63}\\.[a-z\\.]{2,6})$"
         do {
-            #if os(Linux)
-                let regex = try RegularExpression(pattern: pattern, options: [.caseInsensitive])
-            #else
-                let regex = try NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
-            #endif
+            let regex = try RegularExpressionType(pattern: pattern, options: [.caseInsensitive])
 
-            let hostnameRange = NSMakeRange(0, self.hostname.utf8.count)
+            let hostnameRange = NSRange(location: 0, length: self.hostname.utf8.count)
 
             guard let match = regex.matches(in: self.hostname, options: [], range: hostnameRange).first else {
                 return self.hostname
@@ -86,15 +72,26 @@ public class RouterRequest {
 
         return subdomains.filter { !$0.isEmpty }
     }()
-    
+
     /// The HTTP version of the request.
     public let httpVersion: HTTPVersion
 
     /// The method of the request.
     public let method: RouterMethod
 
+    private var _parsedURL: URLParser?
+    internal let parsedURLPath: URLParser
+
     /// The parsed URL.
-    public let parsedURL: URLParser
+    public private(set) lazy var parsedURL: URLParser = { [unowned self] in
+        if let result = self._parsedURL {
+            return result
+        } else {
+            let result = URLParser(url: self.serverRequest.urlURL.absoluteString.data(using: .utf8)!, isConnect: false)
+            self._parsedURL = result
+            return result
+        }
+    }()
 
     /// The router as a String.
     public internal(set) var route: String?
@@ -102,13 +99,29 @@ public class RouterRequest {
     /// The currently matched section of the URL.
     public internal(set) var matchedPath = ""
 
+    /// A Bool that indicates whether or not a partial match of the path by the pattern is
+    /// sufficient. If true, subrouter will snip matchedPath from path before processing
+    /// middleware
+    var allowPartialMatch = true
+
     /// The original URL as a string.
-    public var originalURL: String {
-        return serverRequest.urlString
-    }
+    public var originalURL: String { return serverRequest.urlURL.absoluteString }
 
     /// The URL.
-    public let url: String
+    /// This contains just the path and query parameters starting with '/'
+    /// Use 'urlURL' for the full URL
+    @available(*, deprecated, message:
+        "This contains just the path and query parameters starting with '/'. use 'urlURL' instead")
+    public var url: String { return serverRequest.urlString }
+
+    /// The URL from the request as URLComponents
+    /// URLComponents has a memory leak on linux as of swift 3.0.1. Use 'urlURL' instead
+    @available(*, deprecated, message:
+        "URLComponents has a memory leak on linux as of swift 3.0.1. use 'urlURL' instead")
+    public var urlComponents: URLComponents { return serverRequest.urlComponents }
+
+    /// The URL from the request
+    public var urlURL: URL { return serverRequest.urlURL }
 
     /// List of HTTP headers with simple String values.
     public let headers: Headers
@@ -117,20 +130,35 @@ public class RouterRequest {
     public var remoteAddress: String { return serverRequest.remoteAddress }
 
     /// Parsed Cookies, used to do a lazy parsing of the appropriate headers.
-    private lazy var _cookies: Cookies = { [unowned self] in
-        return Cookies(headers: self.serverRequest.headers)
+    public lazy var cookies: [String: HTTPCookie] = { [unowned self] in
+        return Cookies.parse(headers: self.serverRequest.headers)
     }()
-
-    /// Set of parsed cookies.
-    public var cookies: [String: HTTPCookie] {
-        return _cookies.cookies
-    }
 
     /// List of URL parameters.
     public internal(set) var parameters: [String:String] = [:]
 
     /// List of query parameters.
-    public var queryParameters: [String:String] { return parsedURL.queryParameters }
+    public lazy var queryParameters: [String:String] = { [unowned self] in
+        var decodedParameters: [String:String] = [:]
+        if let query = self.urlURL.query {
+            for item in query.components(separatedBy: "&") {
+                guard let range = item.range(of: "=") else {
+                    decodedParameters[item] = nil
+                    break
+                }
+                let key = item.substring(to: range.lowerBound)
+                let value = item.substring(from: range.upperBound)
+                let valueReplacingPlus = value.replacingOccurrences(of: "+", with: " ")
+                if let decodedValue = valueReplacingPlus.removingPercentEncoding {
+                    decodedParameters[key] = decodedValue
+                } else {
+                    Log.warning("Unable to decode query parameter \(key)")
+                    decodedParameters[key] = valueReplacingPlus
+                }
+            }
+        }
+        return decodedParameters
+        }()
 
     /// User info.
     public var userInfo: [String: Any] = [:]
@@ -138,15 +166,16 @@ public class RouterRequest {
     /// Body of the message.
     public internal(set) var body: ParsedBody?
 
+    internal var handledNamedParameters = Set<String>()
+
     /// Initializes a `RouterRequest` instance
     ///
     /// - Parameter request: the server request
     init(request: ServerRequest) {
         serverRequest = request
+        parsedURLPath = URLParser(url: request.url, isConnect: false)
         httpVersion = HTTPVersion(major: serverRequest.httpVersionMajor ?? 1, minor: serverRequest.httpVersionMinor ?? 1)
         method = RouterMethod(fromRawValue: serverRequest.method)
-        parsedURL = URLParser(url: serverRequest.url, isConnect: false)
-        url = String(serverRequest.urlString)
         headers = Headers(headers: serverRequest.headers)
     }
 
@@ -179,7 +208,14 @@ public class RouterRequest {
         }
 
         let headerValues = acceptHeaderValue.characters.split(separator: ",").map(String.init)
-        return MimeTypeAcceptor.accepts(headerValues: headerValues, types: types)
+        // special header value that matches all types
+        let matchAllPattern: String
+        if header.caseInsensitiveCompare("Accept") == .orderedSame {
+            matchAllPattern = "*/*"
+        } else {
+            matchAllPattern = "*"
+        }
+        return MimeTypeAcceptor.accepts(headerValues: headerValues, types: types, matchAllPattern: matchAllPattern)
     }
 
     /// Check if passed in types are acceptable based on the request's header field
@@ -205,42 +241,41 @@ public class RouterRequest {
 }
 
 private class Cookies {
-
-    /// Storage of parsed Cookie headers
-    fileprivate var cookies = [String: HTTPCookie]()
-    
-    /// Static for Cookie header key value
-    private let cookieHeader = "cookie"
-
-    fileprivate init(headers: HeadersContainer) {
-        guard let rawCookies = headers[cookieHeader] else {
-            return
+    fileprivate static func parse(headers: HeadersContainer) -> [String: HTTPCookie] {
+        var cookies = [String: HTTPCookie]()
+        guard let cookieHeaders = headers["cookie"] else {
+            return cookies
         }
-        for cookie in rawCookies {
-            initCookie(cookie, cookies: &cookies)
-        }
-    }
-    
-    private func initCookie(_ cookie: String, cookies: inout [String: HTTPCookie]) {
-        let cookieNameValues = cookie.components(separatedBy: "; ")
-        for  cookieNameValue in cookieNameValues {
-            let cookieNameValueParts = cookieNameValue.components(separatedBy: "=")
-            if   cookieNameValueParts.count == 2 {
-                #if os(Linux)
-                    let cookieName = cookieNameValueParts[0]
-                    let cookieValue = cookieNameValueParts[1]
-                #else
-                    let cookieName = cookieNameValueParts[0] as NSString
-                    let cookieValue = cookieNameValueParts[1] as NSString
-                #endif
-                let theCookie = HTTPCookie(properties:
-                                                [HTTPCookiePropertyKey.domain: ".",
-                                                 HTTPCookiePropertyKey.path: "/",
-                                                 HTTPCookiePropertyKey.name: cookieName ,
-                                                 HTTPCookiePropertyKey.value: cookieValue])
 
-                cookies[cookieNameValueParts[0]] = theCookie
+        for cookieHeader in cookieHeaders {
+            for cookie in cookieHeader.components(separatedBy: ";") {
+                let trimmedCookie = cookie.trimmingCharacters(in: .whitespaces)
+                if let cookie = getCookie(cookie: trimmedCookie) {
+                    cookies[cookie.name] = cookie
+                }
             }
         }
+        return cookies
+    }
+
+    private static func getCookie(cookie: String) -> HTTPCookie? {
+        guard let range = cookie.range(of: "=") else {
+            return nil
+        }
+
+        let name = cookie.substring(to: range.lowerBound).trimmingCharacters(in: .whitespaces)
+        var value = cookie.substring(from: range.upperBound).trimmingCharacters(in: .whitespaces)
+        let chars = value.characters
+        if chars.count >= 2 && chars.first == "\"" && chars.last == "\"" {
+            // unquote value
+            value.remove(at: value.startIndex)
+            value.remove(at: value.index(before: value.endIndex))
+        }
+
+        return HTTPCookie(properties:
+            [HTTPCookiePropertyKey.domain: ".",
+             HTTPCookiePropertyKey.path: "/",
+             HTTPCookiePropertyKey.name: name,
+             HTTPCookiePropertyKey.value: value])
     }
 }

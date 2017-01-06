@@ -20,7 +20,6 @@ import Foundation
 @testable import Kitura
 @testable import KituraNet
 
-#if os(Linux)
 let cookie1Name = "KituraTest1"
 let cookie1Value = "Testing-Testing-1-2-3"
 let cookie2Name = "KituraTest2"
@@ -28,29 +27,22 @@ let cookie2Value = "Testing-Testing"
 let cookie2ExpireExpected = Date(timeIntervalSinceNow: 600.0)
 let cookie3Name = "KituraTest3"
 let cookie3Value = "A-testing-we-go"
-
 let cookieHost = "localhost"
-#else
-let cookie1Name = "KituraTest1" as NSString
-let cookie1Value = "Testing-Testing-1-2-3"  as NSString
-let cookie2Name = "KituraTest2"  as NSString
-let cookie2Value = "Testing-Testing" as NSString
-let cookie2ExpireExpected = Date(timeIntervalSinceNow: 600.0)
-let cookie3Name = "KituraTest3" as NSString
-let cookie3Value = "A-testing-we-go" as NSString
 
-let cookieHost = "localhost" as NSString
-#endif
+let responseBodySeparator = "RESPONSE-BODY-SEPARATOR"
 
 class TestCookies: XCTestCase {
 
     static var allTests: [(String, (TestCookies) -> () throws -> Void)] {
         return [
-            ("testCookieToServer", testCookieToServer),
-            ("testCookieFromServer", testCookieFromServer)
+            ("testCookieToServerWithSemiColonSeparator", testCookieToServerWithSemiColonSeparator),
+            ("testCookieToServerWithSemiColonSpaceSeparator", testCookieToServerWithSemiColonSpaceSeparator),
+            ("testCookieToServerWithSemiColonWhitespacesSeparator", testCookieToServerWithSemiColonWhitespacesSeparator),
+            ("testCookieFromServer", testCookieFromServer),
+            ("testNoCookies", testNoCookies)
         ]
     }
-    
+
     override func setUp() {
         doSetUp()
     }
@@ -61,25 +53,58 @@ class TestCookies: XCTestCase {
 
     let router = TestCookies.setupRouter()
 
-    func testCookieToServer() {
+    func testCookieToServerWithSemiColonSeparator() {
+        cookieToServer(separator: ";", quoteValue: false)
+    }
+
+    func testCookieToServerWithSemiColonSpaceSeparator() {
+        cookieToServer(separator: "; ", quoteValue: true)
+    }
+
+    func testCookieToServerWithSemiColonWhitespacesSeparator() {
+        cookieToServer(separator: "; \t ", quoteValue: true)
+    }
+
+    private func cookieToServer(separator: String, quoteValue: Bool) {
         performServerTest(router, asyncTasks: { expectation in
+            let cookieMap = [" Plover ": " value with spaces ",
+                           "Zxcv": "(E = mc^2)",
+                           "value with one quote": "\"",
+                           "empty value": "",
+                           "value with embedded quotes": "x\"=\"y",
+                           "name with spaces and values with equals": "=====",
+                           "unicode values": "x (\u{1f3c8}) = (\u{1f37a}) y"]
+            var rawCookies = [String]()
+            var parsedCookies = [String]()
+            for (name, value) in cookieMap {
+                let name = name.trimmingCharacters(in: .whitespaces)
+                if quoteValue {
+                    rawCookies.append(name + "=\"" + value + "\"")
+                    parsedCookies.append(name + "=" + value)
+                } else {
+                    rawCookies.append(name + "=" + value)
+                    parsedCookies.append(name + "=" + value.trimmingCharacters(in: .whitespaces))
+                }
+            }
+
             self.performRequest("get", path: "/1/cookiedump", callback: {response in
                 XCTAssertEqual(response!.statusCode, HTTPStatusCode.OK, "cookiedump route did not match single path request")
                 do {
                     var data = Data()
-                    let count = try response!.readAllData(into: &data)
-                    XCTAssertEqual(count, 4, "Plover's value should have been four bytes")
-                    let ploverValue = String(data: data as Data, encoding: .utf8)
-                    if  let ploverValue = ploverValue {
-                        XCTAssertEqual(ploverValue, "qwer")
+                    try response!.readAllData(into: &data)
+
+                    let responseBody = String(data: data as Data, encoding: .utf8)
+                    if  let responseBody = responseBody {
+                        XCTAssertEqual(responseBody.components(separatedBy: responseBodySeparator).sorted(),
+                                       parsedCookies.sorted())
                     } else {
-                        XCTFail("Plover's value wasn't an UTF8 string")
+                        XCTFail("Response body wasn't an UTF8 string")
                     }
                 } catch {
                     XCTFail("Failed reading the body of the response")
                 }
                 expectation.fulfill()
-            }, headers: ["Cookie": "Plover=qwer; Zxcv=tyuiop"])
+            }, headers: ["Cookie": rawCookies.joined(separator: separator)])
         })
     }
 
@@ -134,42 +159,24 @@ class TestCookies: XCTestCase {
                     XCTAssertEqual(nameValue.count, 2, "Malformed Set-Cookie header \(headerValue)")
 
                     if  nameValue[0] == named {
-                        #if os(Linux)
-                            var properties = [HTTPCookiePropertyKey: Any]()
-                            let cookieName = nameValue[0]
-                            let cookieValue = nameValue[1]
-                        #else
-                            var properties = [HTTPCookiePropertyKey : AnyObject]()
-                            let cookieName = nameValue[0] as NSString
-                            let cookieValue = nameValue[1] as NSString
-                        #endif
+                        var properties = [HTTPCookiePropertyKey: Any]()
+                        let cookieName = nameValue[0]
+                        let cookieValue = nameValue[1]
                         properties[HTTPCookiePropertyKey.name]  =  cookieName
                         properties[HTTPCookiePropertyKey.value] =  cookieValue
 
                         for  part in parts[1..<parts.count] {
                             var pieces = part.components(separatedBy: "=")
                             let piece = pieces[0].lowercased()
-                            switch(piece) {
+                            switch piece {
                             case "secure", "httponly":
-                                #if os(Linux)
-                                    let secureValue = "Yes"
-                                #else
-                                    let secureValue = "Yes" as NSString
-                                #endif
+                                let secureValue = "Yes"
                                 properties[HTTPCookiePropertyKey.secure] = secureValue
                             case "path" where pieces.count == 2:
-                                #if os(Linux)
-                                    let path = pieces[1]
-                                #else
-                                    let path = pieces[1] as NSString
-                                #endif
+                                let path = pieces[1]
                                 properties[HTTPCookiePropertyKey.path] = path
                            case "domain" where pieces.count == 2:
-                                #if os(Linux)
-                                    let domain = pieces[1]
-                                #else
-                                    let domain = pieces[1] as NSString
-                                #endif
+                                let domain = pieces[1]
                                 properties[HTTPCookiePropertyKey.domain] = domain
                             case "expires" where pieces.count == 2:
                                 resultExpire = pieces[1]
@@ -188,15 +195,56 @@ class TestCookies: XCTestCase {
         return (resultCookie, resultExpire)
     }
 
+    func testNoCookies() {
+        performServerTest(router, asyncTasks: { expectation in
+            self.performRequest("get", path: "/1/cookiedump", callback: {response in
+                XCTAssertEqual(response!.statusCode, HTTPStatusCode.OK, "cookiedump route did not match single path request")
+                do {
+                    var data = Data()
+                    try response!.readAllData(into: &data)
+
+                    let responseBody = String(data: data as Data, encoding: .utf8)
+                    if  let responseBody = responseBody {
+                        XCTAssertEqual(responseBody, "")
+                    } else {
+                        XCTFail("Response body wasn't an UTF8 string")
+                    }
+                } catch {
+                    XCTFail("Failed reading the body of the response")
+                }
+                expectation.fulfill()
+            })
+        }, { expectation in
+            self.performRequest("get", path: "/1/cookiedump", callback: {response in
+                XCTAssertEqual(response!.statusCode, HTTPStatusCode.OK, "cookiedump route did not match single path request")
+                do {
+                    var data = Data()
+                    try response!.readAllData(into: &data)
+
+                    let responseBody = String(data: data as Data, encoding: .utf8)
+                    if  let responseBody = responseBody {
+                        XCTAssertEqual(responseBody, "")
+                    } else {
+                        XCTFail("Response body wasn't an UTF8 string")
+                    }
+                } catch {
+                    XCTFail("Failed reading the body of the response")
+                }
+                expectation.fulfill()
+            }, headers: ["Cookie": "ploverxyzzy"])
+        })
+    }
 
     static func setupRouter() -> Router {
         let router = Router()
 
         router.get("/1/cookiedump") {request, response, next in
-            response.status(HTTPStatusCode.OK)
-            if  let ploverCookie = request.cookies["Plover"] {
-                response.send(ploverCookie.value)
+            var cookies: [String] = []
+            for (name, cookie) in request.cookies {
+                cookies.append(name + "=" + cookie.value)
             }
+            response.status(HTTPStatusCode.OK)
+            response.send(cookies.joined(separator: responseBodySeparator))
 
             next()
         }

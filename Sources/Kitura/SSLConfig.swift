@@ -19,13 +19,13 @@ import SSLService
 // MARK: SSLConfig
 
 public struct SSLConfig {
-    
+
     // MARK: Properties
-    
+
     public private(set) var config: SSLService.Configuration
-    
+
     // MARK: Lifecycle
-    
+
     #if os(Linux)
     ///
     /// Initialize an SSLService.Configuration instance using a `CA Certificate` file.
@@ -38,11 +38,11 @@ public struct SSLConfig {
     ///
     ///	- Returns:	New SSLConfig instance.
     ///
-    public init(withCACertificateFilePath caCertificateFilePath: String?, usingCertificateFile certificateFilePath: String?, withKeyFile keyFilePath: String? = nil, usingSelfSignedCerts selfSigned: Bool = true) {
-        
-        config = SSLService.Configuration(withCACertificateFilePath: caCertificateFilePath, usingCertificateFile: certificateFilePath, withKeyFile:keyFilePath, usingSelfSignedCerts: selfSigned);
+    public init(withCACertificateFilePath caCertificateFilePath: String?, usingCertificateFile certificateFilePath: String?, withKeyFile keyFilePath: String? = nil, usingSelfSignedCerts selfSigned: Bool = true, cipherSuite: String? = nil) {
+
+        config = SSLService.Configuration(withCACertificateFilePath: caCertificateFilePath, usingCertificateFile: certificateFilePath, withKeyFile:keyFilePath, usingSelfSignedCerts: selfSigned, cipherSuite: cipherSuite)
     }
-    
+
     ///
     /// Initialize an SSLService.Configuration instance using a `CA Certificate` directory.
     ///
@@ -56,12 +56,12 @@ public struct SSLConfig {
     ///
     ///	- Returns:	New SSLConfig instance.
     ///
-    public init(withCACertificateDirectory caCertificateDirPath: String?, usingCertificateFile certificateFilePath: String?, withKeyFile keyFilePath: String? = nil, usingSelfSignedCerts selfSigned: Bool = true) {
-        
-        config = SSLService.Configuration(withCACertificateDirectory:caCertificateDirPath, usingCertificateFile: certificateFilePath, withKeyFile: keyFilePath, usingSelfSignedCerts: selfSigned);
+    public init(withCACertificateDirectory caCertificateDirPath: String?, usingCertificateFile certificateFilePath: String?, withKeyFile keyFilePath: String? = nil, usingSelfSignedCerts selfSigned: Bool = true, cipherSuite: String? = nil) {
+
+        config = SSLService.Configuration(withCACertificateDirectory:caCertificateDirPath, usingCertificateFile: certificateFilePath, withKeyFile: keyFilePath, usingSelfSignedCerts: selfSigned, cipherSuite: cipherSuite)
     }
     #endif // os(Linux)
-    
+
     ///
     /// Initialize an SSLService.Configuration instance using a `Certificate Chain File`.
     ///
@@ -74,8 +74,8 @@ public struct SSLConfig {
     ///
     ///	- Returns:	New SSLConfig instance.
     ///
-    public init(withChainFilePath chainFilePath: String? = nil, withPassword password: String? = nil, usingSelfSignedCerts selfSigned: Bool = true) {
-        
-        config = SSLService.Configuration(withChainFilePath: chainFilePath, withPassword: password, usingSelfSignedCerts: selfSigned)
+    public init(withChainFilePath chainFilePath: String? = nil, withPassword password: String? = nil, usingSelfSignedCerts selfSigned: Bool = true, cipherSuite: String? = nil) {
+
+        config = SSLService.Configuration(withChainFilePath: chainFilePath, withPassword: password, usingSelfSignedCerts: selfSigned, cipherSuite: cipherSuite)
     }
 }

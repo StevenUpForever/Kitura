@@ -22,6 +22,11 @@ class FileResourceServer {
     /// if file found - send it in response
     func sendIfFound(resource: String, usingResponse response: RouterResponse) {
         guard let resourceFileName = getFilePath(for: resource) else {
+            do {
+                try response.send("Cannot find resource: \(resource)").status(.notFound).end()
+            } catch {
+                Log.error("failed to send not found response for resource: \(resource)")
+            }
             return
         }
 
@@ -35,7 +40,11 @@ class FileResourceServer {
 
     private func getFilePath(for resource: String) -> String? {
         let fileManager = FileManager.default
-        let potentialResource = getResourcePathBasedOnSourceLocation(for: resource)
+        var potentialResource = getResourcePathBasedOnSourceLocation(for: resource)
+
+        if potentialResource.hasSuffix("/") {
+            potentialResource += "index.html"
+        }
 
         let fileExists = fileManager.fileExists(atPath: potentialResource)
         if fileExists {
@@ -50,9 +59,9 @@ class FileResourceServer {
         let resourceFilePrefixRange: NSRange
         let lastSlash = fileName.range(of: "/", options: .backwards)
         if  lastSlash.location != NSNotFound {
-            resourceFilePrefixRange = NSMakeRange(0, lastSlash.location+1)
+            resourceFilePrefixRange = NSRange(location: 0, length: lastSlash.location+1)
         } else {
-            resourceFilePrefixRange = NSMakeRange(0, fileName.length)
+            resourceFilePrefixRange = NSRange(location: 0, length: fileName.length)
         }
         return fileName.substring(with: resourceFilePrefixRange) + "resources/" + resource
     }
@@ -62,10 +71,10 @@ class FileResourceServer {
             let packagePath = fileManager.currentDirectoryPath + "/Packages"
             let packages = try fileManager.contentsOfDirectory(atPath: packagePath)
             for package in packages {
-                let potentalResource = "\(packagePath)/\(package)/Sources/Kitura/resources/\(resource)"
-                let resourceExists = fileManager.fileExists(atPath: potentalResource)
+                let potentialResource = "\(packagePath)/\(package)/Sources/Kitura/resources/\(resource)"
+                let resourceExists = fileManager.fileExists(atPath: potentialResource)
                 if resourceExists {
-                    return potentalResource
+                    return potentialResource
                 }
             }
         } catch {
