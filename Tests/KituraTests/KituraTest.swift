@@ -22,55 +22,130 @@ import Kitura
 import Foundation
 import Dispatch
 
-protocol KituraTest {
-    func expectation(line: Int, index: Int) -> XCTestExpectation
-    // swiftlint:disable variable_name
-    func waitExpectation(timeout t: TimeInterval, handler: XCWaitCompletionHandler?)
-    // swiftlint:enable variable_name
+enum SSLOption {
+    case both
+    case httpOnly
+    case httpsOnly
 }
 
-extension KituraTest {
+class KituraTest: XCTestCase {
 
-    func doSetUp() {
-        PrintLogger.use()
-    }
+    static let httpPort = 8080
+    static let httpsPort = 8443
 
-    func doTearDown() {
-    }
+    static private(set) var httpServer: HTTPServer? = nil
+    static private(set) var httpsServer: HTTPServer? = nil
 
-    func performServerTest(_ router: ServerDelegate, line: Int = #line,
-                           asyncTasks: @escaping (XCTestExpectation) -> Void...) {
-        let port = 8090
-        let server = Kitura.addHTTPServer(onPort: port, with: router)
-        defer {
-            Kitura.stop() // make sure to remove server from Kitura static list
+    private(set) var port = -1
+    private(set) var useSSL = false
+
+    static let sslConfig: SSLConfig = {
+        let path = #file
+        let sslConfigDir: String
+        if let range = path.range(of: "/", options: .backwards) {
+            sslConfigDir = path.substring(to: range.lowerBound) + "/SSLConfig/"
+        } else {
+            sslConfigDir = "./SSLConfig/"
         }
 
-        var failed = false
-        server.failed { error in
-            failed = true
-            XCTFail("Error starting server on port \(port): \(error)")
+        #if os(Linux)
+            let certificatePath = sslConfigDir + "certificate.pem"
+            let keyPath = sslConfigDir + "key.pem"
+            return SSLConfig(withCACertificateDirectory: nil, usingCertificateFile: certificatePath,
+                             withKeyFile: keyPath, usingSelfSignedCerts: true)
+        #else
+            let chainFilePath = sslConfigDir + "certificateChain.pfx"
+            return SSLConfig(withChainFilePath: chainFilePath, withPassword: "kitura",
+                             usingSelfSignedCerts: true)
+        #endif
+    }()
+
+    override func setUp() {
+        super.setUp()
+        PrintLogger.use(colored: true)
+    }
+
+    func performServerTest(_ router: ServerDelegate, sslOption: SSLOption = SSLOption.httpOnly,
+                           line: Int = #line, asyncTasks: @escaping (XCTestExpectation) -> Void...) {
+        if sslOption != SSLOption.httpsOnly {
+            self.port = KituraTest.httpPort
+            self.useSSL = false
+            doPerformServerTest(router: router, line: line, asyncTasks: asyncTasks)
         }
 
-        Kitura.start()
+        if sslOption != SSLOption.httpOnly {
+            self.port = KituraTest.httpsPort
+            self.useSSL = true
+            doPerformServerTest(router: router, line: line, asyncTasks: asyncTasks)
+        }
+    }
+
+    func doPerformServerTest(router: ServerDelegate, line: Int, asyncTasks: [(XCTestExpectation) -> Void]) {
+
+        guard startServer(router: router) else {
+            XCTFail("Error starting server on port \(port). useSSL:\(useSSL)")
+            return
+        }
 
         let requestQueue = DispatchQueue(label: "Request queue")
-        if !failed {
-            for (index, asyncTask) in asyncTasks.enumerated() {
-                let expectation = self.expectation(line: line, index: index)
-                requestQueue.async() {
-                    asyncTask(expectation)
-                }
+        for (index, asyncTask) in asyncTasks.enumerated() {
+            let expectation = self.expectation(line: line, index: index)
+            requestQueue.async() {
+                asyncTask(expectation)
             }
+        }
 
-            waitExpectation(timeout: 10) { error in
-                // wait for timeout or for all created expectations to be fulfilled
-                XCTAssertNil(error)
-            }
+        // wait for timeout or for all created expectations to be fulfilled
+        waitForExpectations(timeout: 10) { error in
+            XCTAssertNil(error)
         }
     }
 
-    func performRequest(_ method: String, path: String, callback: @escaping ClientRequest.Callback, headers: [String: String]? = nil, requestModifier: ((ClientRequest) -> Void)? = nil) {
+    private func startServer(router: ServerDelegate) -> Bool {
+        if useSSL {
+            if let server = KituraTest.httpsServer {
+                server.delegate = router
+                return true
+            }
+        } else {
+            if let server = KituraTest.httpServer {
+                server.delegate = router
+                return true
+            }
+        }
+
+        let server = HTTP.createServer()
+        server.delegate = router
+        if useSSL {
+            server.sslConfig = KituraTest.sslConfig.config
+        }
+
+        do {
+            try server.listen(on: port)
+
+            if useSSL {
+                KituraTest.httpsServer = server
+            } else {
+                KituraTest.httpServer = server
+            }
+            return true
+        } catch {
+            XCTFail("Error starting server: \(error)")
+            return false
+        }
+    }
+
+    func stopServer() {
+        KituraTest.httpServer?.stop()
+        KituraTest.httpServer = nil
+
+        KituraTest.httpsServer?.stop()
+        KituraTest.httpsServer = nil
+    }
+
+    func performRequest(_ method: String, path: String, callback: @escaping ClientRequest.Callback,
+                        headers: [String: String]? = nil, requestModifier: ((ClientRequest) -> Void)? = nil) {
+
         var allHeaders = [String: String]()
         if  let headers = headers {
             for  (headerName, headerValue) in headers {
@@ -80,24 +155,23 @@ extension KituraTest {
         if allHeaders["Content-Type"] == nil {
             allHeaders["Content-Type"] = "text/plain"
         }
-        let options: [ClientRequest.Options] =
-                [.method(method), .hostname("localhost"), .port(8090), .path(path), .headers(allHeaders)]
+
+        let schema = self.useSSL ? "https" : "http"
+        var options: [ClientRequest.Options] =
+                [.method(method), .schema(schema), .hostname("localhost"), .port(Int16(self.port)), .path(path),
+                 .headers(allHeaders)]
+        if self.useSSL {
+            options.append(.disableSSLVerification)
+        }
+
         let req = HTTP.request(options, callback: callback)
         if let requestModifier = requestModifier {
             requestModifier(req)
         }
-        req.end()
+        req.end(close: true)
     }
-}
 
-extension XCTestCase: KituraTest {
     func expectation(line: Int, index: Int) -> XCTestExpectation {
-        return self.expectation(description: "\(type(of: self)):\(line)[\(index)]")
-    }
-
-    // swiftlint:disable variable_name
-    func waitExpectation(timeout t: TimeInterval, handler: XCWaitCompletionHandler?) {
-    // swiftlint:enable variable_name
-        self.waitForExpectations(timeout: t, handler: handler)
+        return self.expectation(description: "\(type(of: self)):\(line)[\(index)](ssl:\(useSSL))")
     }
 }

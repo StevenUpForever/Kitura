@@ -27,7 +27,7 @@ import SwiftyJSON
     import Darwin
 #endif
 
-class TestSubrouter: XCTestCase {
+class TestSubrouter: KituraTest {
 
     static var allTests: [(String, (TestSubrouter) -> () throws -> Void)] {
         return [
@@ -37,14 +37,6 @@ class TestSubrouter: XCTestCase {
             ("testMultipleMiddleware", testMultipleMiddleware),
             ("testMergeParams", testMergeParams)
         ]
-    }
-
-    override func setUp() {
-        doSetUp()
-    }
-
-    override func tearDown() {
-        doTearDown()
     }
 
     let router = TestSubrouter.setupRouter()

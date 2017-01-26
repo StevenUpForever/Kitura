@@ -31,7 +31,7 @@ let cookieHost = "localhost"
 
 let responseBodySeparator = "RESPONSE-BODY-SEPARATOR"
 
-class TestCookies: XCTestCase {
+class TestCookies: KituraTest {
 
     static var allTests: [(String, (TestCookies) -> () throws -> Void)] {
         return [
@@ -41,14 +41,6 @@ class TestCookies: XCTestCase {
             ("testCookieFromServer", testCookieFromServer),
             ("testNoCookies", testNoCookies)
         ]
-    }
-
-    override func setUp() {
-        doSetUp()
-    }
-
-    override func tearDown() {
-        doTearDown()
     }
 
     let router = TestCookies.setupRouter()

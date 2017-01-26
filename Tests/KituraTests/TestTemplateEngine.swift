@@ -28,23 +28,20 @@ import KituraTemplateEngine
     import Darwin
 #endif
 
-class TestTemplateEngine: XCTestCase {
+class TestTemplateEngine: KituraTest {
 
     static var allTests: [(String, (TestTemplateEngine) -> () throws -> Void)] {
         return [
             ("testEmptyTemplateName", testEmptyTemplateName),
             ("testMissingExtension", testMissingExtension),
             ("testNoDefaultEngine", testNoDefaultEngine),
-            ("testRender", testRender)
+            ("testRender", testRender),
+            ("testRenderWithExtensionAndWithoutDefaultTemplateEngine",
+             testRenderWithExtensionAndWithoutDefaultTemplateEngine),
+            ("testAddWithFileExtensions", testAddWithFileExtensions),
+            ("testAddWithFileExtensionsWithoutTheDefaultOne",
+             testAddWithFileExtensionsWithoutTheDefaultOne)
         ]
-    }
-
-    override func setUp() {
-        doSetUp()
-    }
-
-    override func tearDown() {
-        doTearDown()
     }
 
     func testEmptyTemplateName() {
@@ -91,6 +88,72 @@ class TestTemplateEngine: XCTestCase {
 
         do {
             let content = try router.render(template: "test.mock", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+    }
+
+    func testRenderWithExtensionAndWithoutDefaultTemplateEngine() {
+        let router = Router()
+        router.add(templateEngine: MockTemplateEngine())
+
+        do {
+            let content = try router.render(template: "test.mock", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+    }
+
+    func testAddWithFileExtensions() {
+        let router = Router()
+        router.add(templateEngine: MockTemplateEngine(), forFileExtensions: ["htm", "html"])
+
+        do {
+            let content = try router.render(template: "test.mock", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+
+        do {
+            let content = try router.render(template: "test.html", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+
+        do {
+            let content = try router.render(template: "test.htm", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+    }
+
+    func testAddWithFileExtensionsWithoutTheDefaultOne() {
+        let router = Router()
+        router.add(templateEngine: MockTemplateEngine(), forFileExtensions: ["htm", "html"],
+                   useDefaultFileExtension: false)
+
+        do {
+            _ = try router.render(template: "test.mock", context: [:])
+        } catch TemplatingError.noTemplateEngineForExtension {
+            //Expect this error to be thrown
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+
+        do {
+            let content = try router.render(template: "test.html", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+
+        do {
+            let content = try router.render(template: "test.htm", context: [:])
             XCTAssertEqual(content, "Hello World!")
         } catch {
             XCTFail("Error during render \(error)")

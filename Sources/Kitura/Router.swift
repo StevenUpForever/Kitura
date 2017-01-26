@@ -103,8 +103,17 @@ public class Router {
     /// that match the extension it supports.
     ///
     /// - Parameter templateEngine: The templating engine to register.
-    public func add(templateEngine: TemplateEngine) {
-        templateEngines[templateEngine.fileExtension] = templateEngine
+    /// - Parameter forFileExtensions: The extensions of the files to apply the template engine on.
+    /// - Parameter useDefaultFileExtension: flag to specify if the default file extension of the
+    ///   template engine should be used
+    public func add(templateEngine: TemplateEngine, forFileExtensions fileExtensions: [String] = [],
+                    useDefaultFileExtension: Bool = true) {
+        if useDefaultFileExtension {
+            templateEngines[templateEngine.fileExtension] = templateEngine
+        }
+        for fileExtension in fileExtensions {
+            templateEngines[fileExtension] = templateEngine
+        }
     }
 
     /// Render a template using a context
@@ -292,7 +301,9 @@ extension Router : ServerDelegate {
                     if  routeResp.statusCode == .unknown  && !routeResp.state.invokedSend {
                         strongSelf.sendDefaultResponse(request: routeReq, response: routeResp)
                     }
-                    try routeResp.end()
+                    if  !routeResp.state.invokedEnd {
+                        try routeResp.end()
+                    }
                 }
             } catch {
                 // Not much to do here

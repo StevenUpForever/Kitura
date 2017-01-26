@@ -27,7 +27,7 @@ import SwiftyJSON
     import Darwin
 #endif
 
-class TestStaticFileServer: XCTestCase {
+class TestStaticFileServer: KituraTest {
 
     static var allTests: [(String, (TestStaticFileServer) -> () throws -> Void)] {
         return [
@@ -36,22 +36,15 @@ class TestStaticFileServer: XCTestCase {
             ("testGetWithSpecialCharacters", testGetWithSpecialCharacters),
             ("testGetWithSpecialCharactersEncoded", testGetWithSpecialCharactersEncoded),
             ("testGetKituraResource", testGetKituraResource),
-            ("testGetMissingKituraResource", testGetMissingKituraResource)
+            ("testGetMissingKituraResource", testGetMissingKituraResource),
+            ("testAbsolutePathFunction", testAbsolutePathFunction)
         ]
-    }
-
-    override func setUp() {
-        doSetUp()
-    }
-
-    override func tearDown() {
-        doTearDown()
     }
 
     let router = TestStaticFileServer.setupRouter()
 
     func testFileServer() {
-    	performServerTest(router, asyncTasks: { expectation in
+        performServerTest(router, asyncTasks: { expectation in
             self.performRequest("get", path:"/qwer", callback: {response in
                 XCTAssertNotNil(response, "ERROR!!! ClientRequest response object was nil")
                 XCTAssertEqual(response!.statusCode, HTTPStatusCode.OK, "HTTP Status code was \(response!.statusCode)")
@@ -219,6 +212,10 @@ class TestStaticFileServer: XCTestCase {
 
     func testGetMissingKituraResource() {
         runGetResponseTest(path: "/@@Kitura-router@@/missing.file", expectedStatusCode: HTTPStatusCode.notFound)
+    }
+
+    func testAbsolutePathFunction() {
+        XCTAssertEqual(StaticFileServer.ResourcePathHandler.getAbsolutePath(for: "/"), "/", "Absolute path did not resolve to system root")
     }
 
 }

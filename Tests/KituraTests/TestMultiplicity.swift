@@ -19,7 +19,7 @@ import XCTest
 @testable import Kitura
 @testable import KituraNet
 
-class TestMultiplicity: XCTestCase {
+class TestMultiplicity: KituraTest {
 
     static var allTests: [(String, (TestMultiplicity) -> () throws -> Void)] {
         return [
@@ -28,14 +28,6 @@ class TestMultiplicity: XCTestCase {
             ("testQuestion", testQuestion),
             ("testCombined", testCombined)
         ]
-    }
-
-    override func setUp() {
-        doSetUp()
-    }
-
-    override func tearDown() {
-        doTearDown()
     }
 
     let router = TestMultiplicity.setupRouter()
