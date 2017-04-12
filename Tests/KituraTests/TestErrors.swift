@@ -74,5 +74,4 @@ class TestErrors: KituraTest {
             }
         }
     }
-
 }
