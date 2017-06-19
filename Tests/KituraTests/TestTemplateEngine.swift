@@ -38,9 +38,10 @@ class TestTemplateEngine: KituraTest {
             ("testRender", testRender),
             ("testRenderWithServer", testRenderWithServer),
             ("testRenderWithOptionsWithServer", testRenderWithOptionsWithServer),
-            ("testRenderWithServerAndSubRouter", testRenderWithServerAndSubRouter),
             ("testRenderWithExtensionAndWithoutDefaultTemplateEngine",
              testRenderWithExtensionAndWithoutDefaultTemplateEngine),
+            ("testRenderWithExtensionAndWithoutDefaultTemplateEngineAfterSettingViewsPath",
+             testRenderWithExtensionAndWithoutDefaultTemplateEngineAfterSettingViewsPath),
             ("testAddWithFileExtensions", testAddWithFileExtensions),
             ("testAddWithFileExtensionsWithoutTheDefaultOne",
              testAddWithFileExtensionsWithoutTheDefaultOne)
@@ -77,7 +78,7 @@ class TestTemplateEngine: KituraTest {
         let router = Router()
 
         do {
-            let _ = try router.render(template: "test", context: [:])
+            _ = try router.render(template: "test", context: [:])
         } catch TemplatingError.noDefaultTemplateEngineAndNoExtensionSpecified {
             //Expect this error to be thrown
         } catch {
@@ -107,19 +108,6 @@ class TestTemplateEngine: KituraTest {
         let router = Router()
         setupRouterForRendering(router, options: MockRenderingOptions())
         performRenderServerTest(withRouter: router, onPath: "/render")
-    }
-
-    func testRenderWithServerAndSubRouter() {
-        //TODO enable this test once https://github.com/IBM-Swift/Kitura/issues/1070 is resolved
-        /*
-
-        let subRouter = Router()
-        setupRouterForRendering(subRouter)
-
-        let router = Router()
-        router.all("/sub", middleware: subRouter)
-        performRenderServerTest(withRouter: router, onPath: "/sub/render")
-        */
     }
 
     private func setupRouterForRendering(_ router: Router, options: RenderingOptions? = nil) {
@@ -164,6 +152,19 @@ class TestTemplateEngine: KituraTest {
     func testRenderWithExtensionAndWithoutDefaultTemplateEngine() {
         let router = Router()
         router.add(templateEngine: MockTemplateEngine())
+
+        do {
+            let content = try router.render(template: "test.mock", context: [:])
+            XCTAssertEqual(content, "Hello World!")
+        } catch {
+            XCTFail("Error during render \(error)")
+        }
+    }
+
+    func testRenderWithExtensionAndWithoutDefaultTemplateEngineAfterSettingViewsPath() {
+        let router = Router()
+        router.add(templateEngine: MockTemplateEngine())
+        router.viewsPath = "./Views2/"
 
         do {
             let content = try router.render(template: "test.mock", context: [:])
